@@ -1,0 +1,29 @@
+# Tag inventory for Vietnamese expressive prompts: 14 NV + 15 FIL + 39 EMO = 68 tags.
+# NV durations are rough priors (seconds added to the target length); AudioSet labels are candidates for the event
+# detector and must be validated before use as a reward.
+
+NV:
+  tags:
+    - {name: breathes, duration: 0.6, audioset: [Breathing]}
+    - {name: cheers, duration: 1.0, audioset: [Cheering]}
+    - {name: clears throat, duration: 0.6, audioset: [Throat clearing]}
+    - {name: clicks tongue, duration: 0.3, audioset: [Clicking]}
+    - {name: coughs, duration: 0.6, audioset: [Cough]}
+    - {name: gasps, duration: 0.4, audioset: [Gasp]}
+    - {name: giggles, duration: 0.8, audioset: [Giggle, Laughter]}
+    - {name: groans, duration: 0.7, audioset: [Groan]}
+    - {name: laughs, duration: 1.0, audioset: [Laughter, "Chuckle, chortle", Belly laugh, Giggle]}
+    - {name: sighs, duration: 0.8, audioset: [Sigh]}
+    - {name: sneezes, duration: 0.7, audioset: [Sneeze]}
+    - {name: sniffs, duration: 0.4, audioset: [Sniff]}
+    - {name: snores, duration: 1.2, audioset: [Snoring]}
+    - {name: yawns, duration: 1.2, audioset: [Yawn]}
+
+FIL:
+  tags: [à, hm, hmmmmm, mm hmm, ô, ôi, ối, ờ, ờm, ủa, uh, uh huh, uhmmmm, ừ, ừm]
+
+EMO:
+  tags: [admiring, affectionate, amused, angry, animated, apologetic, appreciative, apprehensive, approving, assertive,
+         assuring, caring, cautious, comforting, confident, confused, curious, determined, disgusted, emphasized,
+         encouraging, friendly, grateful, happy, informative, neutral, playful, positive, proud, reassuring, relieved,
+         sad, serious, surprised, sympathetic, thinking, uncertain, understanding, warning]
