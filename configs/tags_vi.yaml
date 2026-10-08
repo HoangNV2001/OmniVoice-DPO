@@ -1,26 +1,42 @@
 # Tag inventory for Vietnamese expressive prompts: 14 NV + 15 FIL + 39 EMO = 68 tags.
-# NV durations are rough priors (seconds added to the target length); AudioSet labels are candidates for the event
-# detector and must be validated before use as a reward.
+# NV: duration = rough prior (seconds); audioset = AudioSet labels that count as the event (AST class names). AudioSet has
+# no Yawn or tongue-click class, so those two are approximate.
+# FIL: heard_as = accent-free ASR spellings accepted as the filler being spoken.
 
 NV:
   tags:
-    - {name: breathes, duration: 0.6, audioset: [Breathing]}
-    - {name: cheers, duration: 1.0, audioset: [Cheering]}
+    - {name: breathes, duration: 0.6, audioset: [Breathing, Pant, Gasp, Sigh, Wheeze]}
+    - {name: cheers, duration: 1.0, audioset: [Cheering, Shout, Yell]}
     - {name: clears throat, duration: 0.6, audioset: [Throat clearing]}
     - {name: clicks tongue, duration: 0.3, audioset: [Clicking]}
     - {name: coughs, duration: 0.6, audioset: [Cough]}
-    - {name: gasps, duration: 0.4, audioset: [Gasp]}
-    - {name: giggles, duration: 0.8, audioset: [Giggle, Laughter]}
-    - {name: groans, duration: 0.7, audioset: [Groan]}
-    - {name: laughs, duration: 1.0, audioset: [Laughter, "Chuckle, chortle", Belly laugh, Giggle]}
+    - {name: gasps, duration: 0.4, audioset: [Gasp, Pant]}
+    - {name: giggles, duration: 0.8, audioset: [Laughter, Giggle, Snicker, Belly laugh, "Chuckle, chortle"]}
+    - {name: groans, duration: 0.7, audioset: [Groan, Grunt]}
+    - {name: laughs, duration: 1.0, audioset: [Laughter, Giggle, Snicker, Belly laugh, "Chuckle, chortle"]}
     - {name: sighs, duration: 0.8, audioset: [Sigh]}
     - {name: sneezes, duration: 0.7, audioset: [Sneeze]}
     - {name: sniffs, duration: 0.4, audioset: [Sniff]}
     - {name: snores, duration: 1.2, audioset: [Snoring]}
-    - {name: yawns, duration: 1.2, audioset: [Yawn]}
+    - {name: yawns, duration: 1.2, audioset: [Sigh, Groan, Breathing]}
 
 FIL:
-  tags: [à, hm, hmmmmm, mm hmm, ô, ôi, ối, ờ, ờm, ủa, uh, uh huh, uhmmmm, ừ, ừm]
+  tags:
+    - {name: à, heard_as: [a, ah]}
+    - {name: hm, heard_as: [hm, um, m, uhm, hum, u]}
+    - {name: hmmmmm, heard_as: [hm, um, m, uhm, hum]}
+    - {name: mm hmm, heard_as: [m, hm, um, mhm, uhm, hum, mmhm]}
+    - {name: ô, heard_as: [o, oh]}
+    - {name: ôi, heard_as: [oi, ui]}
+    - {name: ối, heard_as: [oi, ui]}
+    - {name: ờ, heard_as: [o, oh, uh]}
+    - {name: ờm, heard_as: [om, um, uhm, hm, o, m]}
+    - {name: ủa, heard_as: [ua]}
+    - {name: uh, heard_as: [uh, u, o, a, ah, um]}
+    - {name: uh huh, heard_as: [uh, u, o, a, um, huh, hu, ha, hum, hm, uhuh]}
+    - {name: uhmmmm, heard_as: [uhm, um, hm, u, o, om, m]}
+    - {name: ừ, heard_as: [u, uh, um, ua]}
+    - {name: ừm, heard_as: [um, uhm, hm, m, u, hum]}
 
 EMO:
   tags: [admiring, affectionate, amused, angry, animated, apologetic, appreciative, apprehensive, approving, assertive,

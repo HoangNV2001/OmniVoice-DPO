@@ -4,7 +4,8 @@ A tag is a bracketed control written inside the text to synthesize, e.g. ``[laug
 
 - ``NV``: a non-verbal event that takes time (laugh, cough). Has a duration prior and the AudioSet labels a detector
   may report for it.
-- ``FIL``: a filler that is spoken (``[ừm]``). ``spoken`` is the word expected in an ASR transcript.
+- ``FIL``: a filler that is spoken (``[ừm]``). ``spoken`` is how it is written in text; ``heard_as`` lists the
+  accent-free ASR spellings that count as the filler being said.
 - ``EMO``: an emotion or delivery style for the following speech. Takes no time of its own.
 """
 
@@ -27,6 +28,7 @@ class Tag:
     duration: float = 0.0
     spoken: str | None = None
     audioset: tuple[str, ...] = field(default_factory=tuple)
+    heard_as: tuple[str, ...] = field(default_factory=tuple)
 
     @property
     def token(self) -> str:
@@ -70,6 +72,7 @@ class TagInventory:
                 if cat == "FIL":
                     kw.setdefault("spoken", kw["name"])
                 kw["audioset"] = tuple(kw.get("audioset", ()))
+                kw["heard_as"] = tuple(kw.get("heard_as", ()))
                 tags.append(Tag(category=cat, **kw))
         return cls(tags)
 
