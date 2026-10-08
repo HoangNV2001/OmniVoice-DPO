@@ -17,7 +17,8 @@ C, MASK, PAD = 8, 1024, 0
 @pytest.fixture(scope="module")
 def tiny():
     torch.manual_seed(0)
-    llm = transformers.Qwen3Config(vocab_size=300, hidden_size=32, intermediate_size=64, num_hidden_layers=2,
+    llm = transformers.Qwen3Config(vocab_size=1100,  # >= 1025: text embeddings are looked up at audio positions too
+                                   hidden_size=32, intermediate_size=64, num_hidden_layers=2,
                                    num_attention_heads=4, num_key_value_heads=2, head_dim=8,
                                    attn_implementation="eager")
     return OmniVoice(OmniVoiceConfig(llm_config=llm)).eval()
