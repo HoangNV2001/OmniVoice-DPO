@@ -6,7 +6,9 @@ Features are stored, not scores, so thresholds and rules can change without touc
 - ``ast.npz``: per clip an array ``[n_windows, 1 + n_classes]``; column 0 is the window centre (s), the rest are sigmoid
   probabilities of :data:`AST_KEEP`. AST sees the whole clip as "Speech", so it runs on 1.0 s windows with a 0.25 s hop.
 
-    python -m omnivoice_dpo.rewards.features --wav-dir run/ --out run/feat
+    python -m omnivoice_dpo.rewards.features --wav-dir run/ --out run/feat [--no-ast]
+
+``--no-ast`` skips the AudioSet pass (prompts without tags only need ASR).
 """
 
 from __future__ import annotations
@@ -89,15 +91,17 @@ def main():
     ap.add_argument("--out", required=True)
     ap.add_argument("--asr-model", default=ASR_ID)
     ap.add_argument("--language", default="vi")
+    ap.add_argument("--no-ast", action="store_true")
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)
     meta = [json.loads(l) for l in open(os.path.join(a.wav_dir, "meta.jsonl"), encoding="utf-8") if l.strip()]
     ids = [f"{m['id']}.{m['k']}" for m in meta]
     paths = [os.path.join(a.wav_dir, m["wav"]) for m in meta]
     run_asr(ids, paths, os.path.join(a.out, "asr.jsonl"), a.asr_model, a.language)
-    run_ast(ids, paths, os.path.join(a.out, "ast.npz"))
+    if not a.no_ast:
+        run_ast(ids, paths, os.path.join(a.out, "ast.npz"))
     with open(os.path.join(a.out, "models.json"), "w") as f:
-        json.dump({"asr": a.asr_model, "ast": AST_ID}, f)
+        json.dump({"asr": a.asr_model, "ast": None if a.no_ast else AST_ID}, f)
 
 
 if __name__ == "__main__":
