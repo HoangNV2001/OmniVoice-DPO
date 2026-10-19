@@ -9,7 +9,8 @@ Prosody has no automatic judge, so these features never decide which candidate i
 
 Per clip, on a 10 ms grid: F0 (pYIN) in semitones relative to the clip's median voiced F0, and frame energy in dB.
 
-- ``err``: share of reference words the ASR did not find (accent-free, insertions ignored), as in ``tagcheck``.
+- ``err``: share of the ``n_words`` reference words the ASR did not find (accent-free, insertions ignored), as in
+  ``tagcheck``.
 - ``f0_std``, ``f0_p10``, ``f0_p90`` (semitones) and ``voiced`` (fraction of voiced frames in the speech span).
 - ``pauses``: inner silences of at least 150 ms (energy 35 dB below the clip peak), as ``[start_s, dur_s]``.
 - ``rate``: reference words per second of speech (pauses excluded).
@@ -134,7 +135,8 @@ def main():
             key = f"{m['id']}.{m['k']}"
             st, db = cont[key]
             row = {"id": m["id"], "k": m["k"], "dur": round(len(db) * HOP / SR, 2),
-                   "err": round(content_error(m["text"], asr.get(key)), 4), **clip_stats(st, db, len(toks(m["text"]))),
+                   "err": round(content_error(m["text"], asr.get(key)), 4), "n_words": len(toks(m["text"])),
+                   **clip_stats(st, db, len(toks(m["text"]))),
                    "asr": asr[key]["text"] if key in asr else ""}
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
             groups[m["id"]].append(m["k"])

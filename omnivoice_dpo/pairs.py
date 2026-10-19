@@ -9,7 +9,8 @@ The machine never decides which candidate is better. It only:
    to chance.
 
 With ``--prosody <feat>`` (prompts without tags, prosody preference) step 1 only drops candidates with a content error
-above ``max_err``, and step 2 picks the valid pair with the largest prosodic distance (``rewards.prosody``).
+above ``max_err`` and more than one missed word (on a five-word sentence one ASR slip is already 20 %), and step 2 picks
+the valid pair with the largest prosodic distance (``rewards.prosody``).
 
     python -m omnivoice_dpo.pairs --checks run/feat/checks.jsonl --out run/pairs.jsonl
     python -m omnivoice_dpo.pairs --prosody run/feat --out run/pairs.jsonl
@@ -48,7 +49,7 @@ def select_pair(cands: list[dict], rng: random.Random, max_err: float = 0.2):
 
 
 def select_pair_prosody(cands: list[dict], dist: dict, max_err: float = 0.2):
-    valid = [c for c in cands if c["err"] <= max_err]
+    valid = [c for c in cands if c["err"] <= max_err or round(c["err"] * c.get("n_words", 0)) <= 1]
     if len(valid) < 2:
         return None, len(valid)
     d = lambda a, b: dist["dist"][dist["ks"].index(a["k"])][dist["ks"].index(b["k"])]
