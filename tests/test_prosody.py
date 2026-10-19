@@ -17,13 +17,12 @@ def test_inner_pause_and_rate():
     assert s["rate"] == pytest.approx(10 / (2.6 - 0.4), rel=1e-2)
 
 
-def test_dtw_identical_is_zero_and_shift_is_not():
-    t = np.linspace(0, 2 * np.pi, 400)
-    st = (3 * np.sin(t)).astype(np.float32)
+def test_dtw_identical_is_zero_rise_vs_fall_is_not():
+    rise = np.linspace(-2, 2, 400).astype(np.float32)  # question-like final rise vs statement-like fall
     db = np.full(400, -10.0, np.float32)
-    x = prosody.dtw_features(st, db)
+    x = prosody.dtw_features(rise, db)
     assert prosody.dtw_distance(x, x) == pytest.approx(0.0, abs=1e-6)
-    assert prosody.dtw_distance(x, prosody.dtw_features(st + 2, db)) > 1.0
+    assert prosody.dtw_distance(x, prosody.dtw_features(rise[::-1].copy(), db)) > 0.5
 
 
 def test_content_error():
