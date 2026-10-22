@@ -144,7 +144,8 @@ def main():
         vname = pick_voice(sid, names)
         conds = {"null": None, "oracle": model.prosody_encoder.embed_codes(codes, keep),
                  "shuffle": model.prosody_encoder.embed_codes(codes[perm.to(codes.device)], keep)}
-        res = {"dataset": name, "id": sid, "voice": vname, "n_syl": len(syl), "text": text}
+        res = {"dataset": name, "id": sid, "voice": vname, "n_syl": len(syl), "text": text,
+               "distinct_codes": int(torch.unique(codes, dim=0).shape[0])}
         wavs = {}
         if j < a.wav:
             wavs["orig"] = ex.codec.decode(torch.from_numpy(toks[sid].astype(np.int64))[None].cuda()).audio_values.reshape(-1)
@@ -187,12 +188,14 @@ def main():
                 summary[met][f"{k}-null"] = boot([v - (r["null"][met] if r.get("null") else np.nan)
                                                   for v, r in zip(vals, rows)])
     summary["n"] = len(rows)
+    summary["distinct_codes_per_syl"] = float(np.mean([r["distinct_codes"] / r["n_syl"] for r in rows]))
     summary["failed"] = {k: sum(1 for r in rows if not r.get(k)) for k in keys}
     json.dump(summary, open(os.path.join(a.out, "summary.json"), "w"), indent=1)
     for met, d in summary.items():
         if isinstance(d, dict) and met != "failed":
             print(f"### {met}: " + " · ".join(f"{k} {v[0]:.3f} [{v[1]:.3f}, {v[2]:.3f}]" for k, v in d.items()), flush=True)
-    print(f"### n {len(rows)}, failed {summary['failed']}", flush=True)
+    print(f"### n {len(rows)}, failed {summary['failed']}, distinct codes / syllables "
+          f"{summary['distinct_codes_per_syl']:.2f}", flush=True)
 
 
 if __name__ == "__main__":
