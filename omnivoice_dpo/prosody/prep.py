@@ -6,13 +6,16 @@ For every sample of the selected datasets of a data config:
    model learns to reproduce;
 2. features per audio-token frame (25 Hz), :data:`FEATS`: F0 in semitones re the utterance's median voiced F0 (CREPE,
    0 when unvoiced), voiced fraction, energy in dB re the utterance maximum, 8 log-mel bands minus their utterance mean;
-3. syllable spans by CTC forced alignment of the label's letters on the decoded audio, in token frames, with the mean CTC
-   posterior of the syllable's characters as a confidence.
+3. syllable spans by CTC forced alignment of the label's letters on the decoded audio, in token frames. CTC is peaky (a
+   syllable's letters fill a few frames, blanks the rest), so a syllable runs from its first letter to the next syllable's
+   first letter, minus the silence (energy below ``SIL_DB`` re max) just before it, which is kept as the pause after it.
+   The mean CTC posterior of the syllable's letters is its confidence.
 
 Output per dataset in ``<out>/<dataset>/``: ``feats.f16`` (rows of :data:`FEATS` float16, concatenated) and
 ``index.jsonl``, one line per sample::
 
-    {"id", "md5" (of the label text), "off" (first row), "T", "syl": [[char_start, char_end, frame_start, frame_end, conf], ...]}
+    {"id", "md5" (of the label text), "off" (first row), "T",
+     "syl": [[char_start, char_end, frame_start, frame_end, pause_frames, conf], ...]}
 
 ``syl`` is null (and nothing is decoded) when the text cannot be aligned: IPA spans, digits, a character outside the CTC
 vocabulary, or a failed alignment. Shards listed in ``done.txt`` are skipped, so the run can resume.
@@ -38,6 +41,7 @@ from omnivoice_dpo.prosody.text import has_unalignable, norm, syllables
 
 FEATS = ["f0_st", "voiced", "energy_db", *[f"mel{i}" for i in range(8)]]
 FPS, SR, HOP = 25, 24000, 960
+SIL_DB = -35.0
 
 
 def dataset_name(lst: str) -> str:
@@ -135,20 +139,37 @@ class Extractor:
         for s, o in zip(tok_spans, owner):
             if o >= 0:
                 per.setdefault(o, []).append(s)
-        syl = []
-        for i, (a, b) in enumerate(spans):
-            ss = per[i]
-            f0 = min(int(round(ss[0].start * 0.02 * FPS)), T - 1)
-            f1 = min(max(f0 + 1, int(round(ss[-1].end * 0.02 * FPS))), T)
-            syl.append([a, b, f0, f1, round(float(np.mean([s.score for s in ss])), 3)])
 
-        # frame features
         e = 20 * torch.log10(wav.view(T, HOP).pow(2).mean(1).sqrt() + 1e-5)
         e = (e - e.max()).clamp(min=-60)
+        loud = (e > SIL_DB).cpu().numpy()
+        starts, ends = [], []
+        for i in range(len(spans)):
+            ss = per[i]
+            f0 = min(int(round(ss[0].start * 0.02 * FPS)), T - 1)
+            f0 = max(f0, ends[-1] if ends else 0)
+            starts.append(f0)
+            ends.append(min(max(f0 + 1, int(round(ss[-1].end * 0.02 * FPS))), T))
+        syl = []
+        for i, (a, b) in enumerate(spans):
+            nxt = starts[i + 1] if i + 1 < len(spans) else T
+            end = max(ends[i], starts[i] + 1)
+            j = nxt
+            while j > end and not loud[j - 1]:
+                j -= 1
+            if i + 1 == len(spans):  # last syllable: stop at the first silence after its letters
+                j = end
+                while j < T and loud[j]:
+                    j += 1
+            syl.append([a, b, starts[i], j, nxt - j if i + 1 < len(spans) else 0,
+                        round(float(np.mean([s.score for s in per[i]])), 3)])
+
+        # frame features
         mel = torch.log(self.mel(wav)[:, :T] + 1e-5).T
         mel = mel - mel.mean(0, keepdim=True)
         pitch, per_ = torchcrepe.predict(w16[None], 16000, hop_length=160, fmin=50, fmax=550, model="tiny",
-                                         return_periodicity=True, batch_size=4096, device=self.device)
+                                         return_periodicity=True, batch_size=4096, device=self.device,
+                                         decoder=torchcrepe.decode.weighted_argmax)
         n = T * 4
         pitch = torch.nn.functional.pad(pitch[0, :n], (0, max(0, n - pitch.shape[1])), value=1.0).view(T, 4)
         per_ = torch.nn.functional.pad(per_[0, :n], (0, max(0, n - per_.shape[1]))).view(T, 4)
@@ -174,7 +195,7 @@ def write_check(path: str, wav: torch.Tensor, syl: list, text: str):
         i = s[2] * HOP
         y[i:i + len(click)] += click[: len(y) - i]
     sf.write(path + ".wav", y, SR)
-    json.dump({"text": text, "syl": [[text[s[0]:s[1]], s[2], s[3], s[4]] for s in syl]},
+    json.dump({"text": text, "syl": [[text[s[0]:s[1]], *s[2:]] for s in syl]},
               open(path + ".json", "w", encoding="utf-8"), ensure_ascii=False)
 
 
