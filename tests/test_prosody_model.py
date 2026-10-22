@@ -109,3 +109,16 @@ def test_offsets_match_processor_tokens():
         if k >= 0:
             assert piece and piece in text[spans[k][0]:spans[k][1]]
     assert sorted(set(k for k in t2s if k >= 0)) == list(range(len(spans)))
+
+
+def test_batch_without_prosody_touches_encoder(tiny):
+    ids = torch.randint(0, 300, (1, C, 20))
+    am = torch.zeros(1, 20, dtype=torch.bool)
+    am[0, 12:] = True
+    labels = torch.full((1, C, 20), -100)
+    labels[0, :, 12:] = torch.randint(0, 1024, (C, 8))
+    tiny.train()
+    tiny(input_ids=ids, audio_mask=am, labels=labels).loss.backward()
+    assert all(p.grad is not None for p in tiny.prosody_encoder.parameters())
+    tiny.zero_grad()
+    tiny.eval()

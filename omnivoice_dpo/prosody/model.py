@@ -154,6 +154,10 @@ class OmniVoiceProsody(OmniVoice):
         if pros_add is None and self.infer_add is not None and self.infer_add.shape[:2] == (input_ids.shape[0],
                                                                                             input_ids.shape[-1]):
             pros_add = self.infer_add
+        if pros_add is None and self.training:
+            # a batch with no prosody still touches every encoder weight (zero gradient), as DDP without
+            # find_unused_parameters requires
+            pros_add = sum(p.reshape(-1)[0] for p in self.prosody_encoder.parameters()) * 0.0
         self._pros_add = pros_add
         try:
             return super().forward(input_ids=input_ids, audio_mask=audio_mask, labels=labels,
