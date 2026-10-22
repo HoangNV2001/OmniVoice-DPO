@@ -128,7 +128,7 @@ class Extractor:
             ali, sc = AF.forced_align(lp, torch.tensor([tgt], device=self.device), blank=self.blank)
         except RuntimeError:
             return None, None
-        tok_spans = AF.merge_tokens(ali[0], sc[0].exp())
+        tok_spans = AF.merge_tokens(ali[0], sc[0].exp(), blank=self.blank)
         if len(tok_spans) != len(tgt):
             return None, None
         per = {}
