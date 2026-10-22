@@ -96,7 +96,9 @@ class ProsodyEncoder(nn.Module):
         """Quantized codes ``[S, n_dims]`` in [-1, 1]."""
         U, T, _ = feats.shape
         mask = (torch.arange(T, device=feats.device)[None] < flen[:, None]).unsqueeze(-1).to(feats.dtype)
-        scale = torch.tensor(self.feat_scale, dtype=feats.dtype, device=feats.device)
+        dt = self.inp.weight.dtype
+        feats, extra, mask = feats.to(dt), extra.to(dt), mask.to(dt)
+        scale = torch.tensor(self.feat_scale, dtype=dt, device=feats.device)
         x = self.inp(feats * scale) * mask
         for b in self.blocks:
             x = b(x, mask)
@@ -110,7 +112,8 @@ class ProsodyEncoder(nn.Module):
         return self.out(self.codes(feats, flen, syl, extra)) * keep.unsqueeze(-1).to(feats.dtype)
 
     def embed_codes(self, codes, keep):
-        return self.out(codes) * keep.unsqueeze(-1).to(codes.dtype)
+        dt = self.out.weight.dtype
+        return self.out(codes.to(dt)) * keep.unsqueeze(-1).to(dt)
 
 
 def scatter_to_positions(emb: torch.Tensor, tok: torch.Tensor) -> torch.Tensor:
@@ -131,6 +134,7 @@ class OmniVoiceProsody(OmniVoice):
         config.prosody = pc
         self.prosody_encoder = ProsodyEncoder(hidden=config.llm_config.hidden_size, **pc)
         self._pros_add = None
+        self.infer_add = None  # [2B, L, H] set by omnivoice_dpo.prosody.infer around the upstream sampler
 
     def _prepare_embed_inputs(self, input_ids, audio_mask):
         e = super()._prepare_embed_inputs(input_ids, audio_mask)
@@ -147,6 +151,9 @@ class OmniVoiceProsody(OmniVoice):
                 pros_add=None):
         if pros_add is None and pros_feats is not None and pros_syl.shape[0] > 0:
             pros_add = self.prosody_add(pros_feats, pros_flen, pros_syl, pros_extra, pros_keep, pros_tok)
+        if pros_add is None and self.infer_add is not None and self.infer_add.shape[:2] == (input_ids.shape[0],
+                                                                                            input_ids.shape[-1]):
+            pros_add = self.infer_add
         self._pros_add = pros_add
         try:
             return super().forward(input_ids=input_ids, audio_mask=audio_mask, labels=labels,
