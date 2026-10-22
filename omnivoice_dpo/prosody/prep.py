@@ -76,14 +76,14 @@ class Extractor:
     def __init__(self, model_dir: str, ctc_id: str, device: str = "cuda"):
         import torchaudio
         from omnivoice.models.omnivoice import HiggsAudioV2TokenizerModel
-        from transformers import Wav2Vec2FeatureExtractor, Wav2Vec2ForCTC
+        from transformers import Wav2Vec2CTCTokenizer, Wav2Vec2FeatureExtractor, Wav2Vec2ForCTC
 
         self.device = device
         self.codec = HiggsAudioV2TokenizerModel.from_pretrained(os.path.join(model_dir, "audio_tokenizer"),
                                                                 device_map=device).eval()
         self.ctc = Wav2Vec2ForCTC.from_pretrained(ctc_id).to(device).eval()
         self.ctc_fe = Wav2Vec2FeatureExtractor.from_pretrained(ctc_id)
-        vocab = json.load(open(os.path.join(_snapshot(ctc_id), "vocab.json")))
+        vocab = Wav2Vec2CTCTokenizer.from_pretrained(ctc_id).get_vocab()
         self.vocab, self.blank, self.sep = vocab, self.ctc.config.pad_token_id, vocab["|"]
         self.mel = torchaudio.transforms.MelSpectrogram(sample_rate=SR, n_fft=2048, win_length=1920, hop_length=HOP,
                                                         n_mels=8, f_min=50, f_max=8000).to(device)
@@ -161,14 +161,6 @@ class Extractor:
             st = torch.where(v.any(1), 12 * ((lf * v).sum(1) / v.sum(1).clamp(min=1) - med), st)
         feats = torch.cat([st[:, None], vf[:, None], e[:, None], mel], 1)
         return feats.half().cpu().numpy(), syl, wav
-
-
-def _snapshot(name: str) -> str:
-    if os.path.isdir(name):
-        return name
-    from huggingface_hub import snapshot_download
-
-    return snapshot_download(name)
 
 
 def write_check(path: str, wav: torch.Tensor, syl: list, text: str):
