@@ -96,7 +96,8 @@ def main():
     store = ProsodyStore(a.store)
     want = set(a.datasets.split(","))
     lists = []
-    for d in json.load(open(a.data_config)).get("dev", []):
+    cfgj = json.load(open(a.data_config))
+    for d in cfgj.get("dev", []) + cfgj.get("train", []):
         for lst in d["manifest_path"]:
             if lst.split("/dataset/")[1].split("/")[0] in want:
                 lists.append(lst)
