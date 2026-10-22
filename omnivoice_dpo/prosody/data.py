@@ -37,7 +37,10 @@ class ProsodyStore:
             di = len(self.names)
             self.names.append(name)
             for line in open(idx, encoding="utf-8"):
-                r = json.loads(line)
+                try:
+                    r = json.loads(line)
+                except json.JSONDecodeError:  # last line of a store still being written
+                    continue
                 if not r["syl"] or r["off"] < 0:
                     continue
                 s = np.asarray(r["syl"], dtype=np.float32)
