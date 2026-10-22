@@ -169,7 +169,7 @@ def main():
             if j < a.wav:
                 wavs[k] = wav
         for k, w in wavs.items():
-            sf.write(os.path.join(a.out, f"{j:03d}_{k}.wav"), w.float().cpu().numpy(), 24000)
+            sf.write(os.path.join(a.out, f"{j:03d}_{k}.wav"), w.detach().float().cpu().numpy(), 24000)
         fo.write(json.dumps(res, ensure_ascii=False) + "\n")
         fo.flush()
         rows.append(res)
