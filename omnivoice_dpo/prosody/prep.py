@@ -20,6 +20,9 @@ Output per dataset in ``<out>/<dataset>/``: ``feats.f16`` (rows of :data:`FEATS`
 ``syl`` is null (and nothing is decoded) when the text cannot be aligned: IPA spans, digits, a character outside the CTC
 vocabulary, or a failed alignment. Shards listed in ``done.txt`` are skipped, so the run can resume.
 
+``--workers n --worker i`` splits the shards between n processes (by a hash of the shard path); worker i writes to
+``<out>/<dataset>__w<i>/`` and skips shards done in any ``<out>/<dataset>*/``. The store reader takes every sub-directory.
+
     python -m omnivoice_dpo.prosody.prep --data-config data.json --model <ckpt with audio_tokenizer/> --ctc <CTC model> \\
         --out store/ [--datasets a,b] [--limit 200] [--check 5]
 """
@@ -208,13 +211,19 @@ def main():
     ap.add_argument("--datasets", help="comma-separated; default: every 'vi' dataset of the config")
     ap.add_argument("--limit", type=int, default=0, help="samples per dataset (smoke)")
     ap.add_argument("--check", type=int, default=0, help="write this many click-marked wavs per dataset")
+    ap.add_argument("--workers", type=int, default=1)
+    ap.add_argument("--worker", type=int, default=0)
     a = ap.parse_args()
     ex = Extractor(a.model, a.ctc)
     for name, lsts in manifests(a.data_config, set(a.datasets.split(",")) if a.datasets else None).items():
-        d = os.path.join(a.out, name)
+        d = os.path.join(a.out, name if a.workers == 1 else f"{name}__w{a.worker}")
         os.makedirs(d, exist_ok=True)
         done_path = os.path.join(d, "done.txt")
-        done = set(open(done_path).read().split()) if os.path.exists(done_path) else set()
+        done = set()
+        for sub in os.listdir(a.out):
+            f = os.path.join(a.out, sub, "done.txt")
+            if (sub == name or sub.startswith(name + "__w")) and os.path.exists(f):
+                done |= set(open(f).read().split())
         fe = open(os.path.join(d, "feats.f16"), "ab")
         fi = open(os.path.join(d, "index.jsonl"), "a", encoding="utf-8")
         rows = os.path.getsize(os.path.join(d, "feats.f16")) // (2 * len(FEATS))
@@ -224,6 +233,8 @@ def main():
             for line in open(lst):
                 p = line.split()
                 if len(p) < 4 or p[0] in done:
+                    continue
+                if int(hashlib.md5(p[0].encode()).hexdigest(), 16) % a.workers != a.worker:
                     continue
                 for key, tok, lab in iter_shard(p[0], p[1]):
                     text = lab.get("text", "")
