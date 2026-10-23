@@ -7,6 +7,10 @@ the sentence is edited; the output is decoded, re-aligned and measured against t
 seed): change of the target syllable's F0 (semitones), log duration, pause after (frames), and of its neighbours (to see
 whether the change stays local), plus the CTC confidence of the whole sentence.
 
+``--context self`` keeps the edit in the training distribution, where nearly every syllable has a code: the uncoded
+generation is re-encoded into codes for every syllable (condition ``self``), then only the target syllable's levels are
+changed. Edit entries are then an absolute level, ``"+k"`` / ``"-k"`` to move that many levels (clamped), or null to keep.
+
     python -m omnivoice_dpo.prosody.control --model <ckpt dir with audio_tokenizer/> --data-config data.json \\
         --ctc <CTC model> --voices-dir voices/ --out out/ --neutral '[4,0,1,2]' \\
         --edits '{"pitch_up": [0,null,null,null], "pitch_down": [7,null,null,null], "long": [null,null,null,4]}'
@@ -30,7 +34,7 @@ def main():
     from omnivoice import OmniVoiceGenerationConfig
 
     from omnivoice_dpo.generate import load_voices, pick_voice
-    from omnivoice_dpo.prosody.infer import generate
+    from omnivoice_dpo.prosody.infer import codes_from_store, generate
     from omnivoice_dpo.prosody.model import OmniVoiceProsody
     from omnivoice_dpo.prosody.prep import Extractor
 
@@ -42,13 +46,14 @@ def main():
     ap.add_argument("--out", required=True)
     ap.add_argument("--datasets", default="style_tts_metadata_dev,production_voice_dev")
     ap.add_argument("--n", type=int, default=30, help="texts per dataset")
-    ap.add_argument("--neutral", required=True)
+    ap.add_argument("--neutral", help="levels used for null entries (context none)")
+    ap.add_argument("--context", choices=["none", "self"], default="none")
     ap.add_argument("--edits", required=True)
     ap.add_argument("--wav", type=int, default=12)
     ap.add_argument("--seed", type=int, default=0)
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)
-    neutral, edits = json.loads(a.neutral), json.loads(a.edits)
+    neutral, edits = json.loads(a.neutral) if a.neutral else None, json.loads(a.edits)
     rng = random.Random(a.seed)
 
     want = set(a.datasets.split(","))
@@ -86,9 +91,21 @@ def main():
         res = {"dataset": name, "id": sid, "text": text, "voice": vname, "target": tgt,
                "target_syl": text[slice(*syllables(text)[tgt])]}
         outs = {}
-        for cond in ["null", *edits]:
+        self_idx = None
+        for cond in ["null", *(["self"] if a.context == "self" else []), *edits]:
             emb = None
-            if cond != "null":
+            if cond != "null" and a.context == "self":
+                if self_idx is None:
+                    res[cond] = None
+                    continue
+                idx = self_idx.clone()
+                for i, v in enumerate(edits.get(cond, [None] * idx.shape[1])):
+                    if v is None:
+                        continue
+                    new = idx[tgt, i] + int(v) if isinstance(v, str) else v
+                    idx[tgt, i] = min(max(int(new), 0), enc.fsq.level_list[i] - 1)
+                emb = enc.embed_codes(enc.fsq.from_indices(idx), torch.ones(n, device=model.device))
+            elif cond != "null":
                 lv = [neutral[i] if v is None else v for i, v in enumerate(edits[cond])]
                 code = enc.fsq.from_indices(torch.tensor([lv], device=model.device))
                 keep = torch.zeros(n, device=model.device)
@@ -100,6 +117,8 @@ def main():
                 res[cond] = None
                 continue
             gf, gs, wav = got
+            if cond == "null" and a.context == "self":
+                self_idx = enc.fsq.indices(codes_from_store(model, gf, np.asarray(gs, dtype=np.float64)))
             outs[cond] = (syl_stats(gf, gs), float(np.mean([s[5] for s in gs])))
             res[cond] = {"conf": outs[cond][1]}
             if j < a.wav:
@@ -120,14 +139,15 @@ def main():
         if (j + 1) % 10 == 0:
             print(f"### {j + 1}/{len(picked)}", flush=True)
 
-    summary = {"n": len(rows), "neutral": neutral, "edits": edits}
-    for cond in edits:
+    summary = {"n": len(rows), "neutral": neutral, "edits": edits, "context": a.context}
+    conds = (["self"] if a.context == "self" else []) + list(edits)
+    for cond in conds:
         summary[cond] = {m: boot([r[cond].get(m, np.nan) if r.get(cond) else np.nan for r in rows])
                          for m in ("d_f0", "d_dur", "d_pause", "d_f0_nb", "d_dur_nb")}
         summary[cond]["conf-null"] = boot([r[cond]["conf"] - r["null"]["conf"] if r.get(cond) and r.get("null") else np.nan
                                            for r in rows])
     json.dump(summary, open(os.path.join(a.out, "summary.json"), "w"), indent=1)
-    for cond in edits:
+    for cond in conds:
         print(f"### {cond}: " + " · ".join(f"{m} {v[0]:+.3f} [{v[1]:+.3f}, {v[2]:+.3f}]"
                                           for m, v in summary[cond].items()), flush=True)
 
