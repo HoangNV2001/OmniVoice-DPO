@@ -12,7 +12,10 @@ prompt (a voicebank voice chosen by id hash), the original's length and the same
 Every output is decoded, re-aligned and measured with the prep extractor. Per syllable: mean F0 (semitones re the
 utterance median, voiced frames), log duration, pause after. Per utterance, against the original: Pearson r of F0 and of
 log duration, F1 of pauses (at least ``PAUSE`` frames), mean CTC confidence (an intelligibility proxy). Summary: means and
-paired bootstrap 95 % CIs (4000 resamples) of each condition minus ``null``.
+paired bootstrap 95 % CIs (4000 resamples) of each condition minus ``null``. Tones make a syllable's F0 largely a
+function of its text, so even the plain model correlates with the recording; ``follow_f0`` / ``follow_dur`` isolate the
+codes' effect: per utterance, r between (condition - null) and (original - null) over syllables (0 when the condition
+moves at random, as ``base`` and ``shuffle`` should).
 
     python -m omnivoice_dpo.prosody.evaluate --model <ckpt dir with audio_tokenizer/> [--base <ckpt>] --data-config data.json \\
         --store store/ --ctc <CTC model> --voices-dir voices/ --out out/ [--datasets a_dev,b_dev] [--n 40] [--wav 15]
@@ -166,9 +169,18 @@ def main():
             gf, gs, wav = got
             g = syl_stats(gf, gs)
             res[k] = {"r_f0": pearson(ref[:, 0], g[:, 0]), "r_dur": pearson(ref[:, 1], g[:, 1]),
-                      "pause_f1": pause_f1(ref, g), "conf": float(np.mean([s[5] for s in gs]))}
+                      "pause_f1": pause_f1(ref, g), "conf": float(np.mean([s[5] for s in gs])), "syl": g.tolist()}
             if j < a.wav:
                 wavs[k] = wav
+        res["orig_syl"] = ref.tolist()
+        # does a condition move away from the plain model in the direction of the recording? per syllable,
+        # r(cond - null, orig - null), for F0 and log duration
+        if res.get("null"):
+            nl = np.asarray(res["null"]["syl"], dtype=np.float64)
+            for k in [k for k in res if k in ("base", "oracle", "shuffle") and res[k]]:
+                c = np.asarray(res[k]["syl"], dtype=np.float64)
+                res[k]["follow_f0"] = pearson(c[:, 0] - nl[:, 0], ref[:, 0] - nl[:, 0])
+                res[k]["follow_dur"] = pearson(c[:, 1] - nl[:, 1], ref[:, 1] - nl[:, 1])
         for k, w in wavs.items():
             sf.write(os.path.join(a.out, f"{j:03d}_{k}.wav"), w.detach().float().cpu().numpy(), 24000)
         fo.write(json.dumps(res, ensure_ascii=False) + "\n")
@@ -187,6 +199,9 @@ def main():
             if k != "null":
                 summary[met][f"{k}-null"] = boot([v - (r["null"][met] if r.get("null") else np.nan)
                                                   for v, r in zip(vals, rows)])
+    for met in ("follow_f0", "follow_dur"):
+        summary[met] = {k: boot([r[k].get(met, np.nan) if r.get(k) else np.nan for r in rows])
+                        for k in keys if k != "null"}
     summary["n"] = len(rows)
     summary["distinct_codes_per_syl"] = float(np.mean([r["distinct_codes"] / r["n_syl"] for r in rows]))
     summary["failed"] = {k: sum(1 for r in rows if not r.get(k)) for k in keys}

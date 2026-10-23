@@ -58,7 +58,8 @@ def test_dropped_syllables_add_nothing_and_grad_flows(tiny):
     torch.nn.init.normal_(tiny.prosody_encoder.out.weight)
     b = pros_batch()
     b["pros_keep"] = torch.tensor([1.0, 0.0, 1.0])
-    add = tiny.prosody_add(**b)
+    add, aux = tiny.prosody_add(**b)
+    assert aux.ndim == 0 and aux > 0
     assert add[0, 6:8].abs().sum() == 0 and add[0, 4:6].abs().sum() > 0 and add[0, :4].abs().sum() == 0
     ids = torch.randint(0, 300, (1, C, 20))
     am = torch.zeros(1, 20, dtype=torch.bool)
@@ -68,6 +69,7 @@ def test_dropped_syllables_add_nothing_and_grad_flows(tiny):
     tiny.train()
     tiny(input_ids=ids, audio_mask=am, labels=labels, **pros_batch()).loss.backward()
     assert tiny.prosody_encoder.inp.weight.grad.abs().sum() > 0
+    assert tiny.prosody_encoder.aux[0].weight.grad.abs().sum() > 0
     tiny.zero_grad()
     tiny.eval()
     torch.nn.init.zeros_(tiny.prosody_encoder.out.weight)
@@ -122,3 +124,11 @@ def test_batch_without_prosody_touches_encoder(tiny):
     assert all(p.grad is not None for p in tiny.prosody_encoder.parameters())
     tiny.zero_grad()
     tiny.eval()
+
+
+def test_aux_targets():
+    from omnivoice_dpo.prosody.model import ProsodyEncoder
+    f = torch.zeros(1, 10, 11)
+    f[0, :4, 0], f[0, :4, 1], f[0, :, 2] = 3.0, 1.0, -20.0  # voiced, +3 st, -20 dB on frames 0..3
+    t = ProsodyEncoder.aux_targets(f, torch.tensor([[0, 0, 4], [0, 4, 10]]), torch.zeros(2, 2))
+    assert torch.allclose(t[0, :3], torch.tensor([0.5, 1.0, -1.0])) and torch.allclose(t[1, :3], torch.tensor([0.0, 0.0, -1.0]))

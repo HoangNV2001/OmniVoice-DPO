@@ -5,6 +5,9 @@ the utterance -> mean over each syllable's frames, plus log duration and log pau
 quantization, a few dims with a few levels each: the information bottleneck) -> linear to the LLM width. The last linear is
 zero-initialized, and a dropped syllable contributes exactly zero, so with no codes the model input is unchanged.
 
+A small decoder predicts simple prosodic statistics of each syllable back from its code (:data:`N_AUX`); its loss
+(``aux_weight``) keeps the codes informative from the start, before the backbone has learned to read them.
+
 Batch fields (built by :mod:`omnivoice_dpo.prosody.data`):
 
 - ``pros_feats`` ``[U, Tmax, F]`` frame features of the U utterances that carry prosody, zero-padded; ``pros_flen`` ``[U]``
@@ -17,13 +20,21 @@ Batch fields (built by :mod:`omnivoice_dpo.prosody.data`):
 
 from __future__ import annotations
 
+import logging
+
+import numpy as np
 import torch
 from torch import nn
 
 from omnivoice.models.omnivoice import OmniVoice
 
+logger = logging.getLogger(__name__)
+
 DEFAULT = {"n_feats": 11, "dim": 256, "n_blocks": 4, "kernel": 5, "levels": [8, 5, 5, 5],
-           "feat_scale": [1 / 6, 1.0, 1 / 20] + [1 / 4] * 8}
+           "feat_scale": [1 / 6, 1.0, 1 / 20] + [1 / 4] * 8, "aux_weight": 1.0}
+# Auxiliary targets per syllable, predicted back from its code so the code has to carry them: mean F0 (semitones, voiced
+# frames) / 6, voiced fraction, mean energy (dB) / 20, log(1 + duration frames), log(1 + pause frames).
+N_AUX = 5
 
 
 class FSQ(nn.Module):
@@ -71,14 +82,16 @@ class _Block(nn.Module):
 
 class ProsodyEncoder(nn.Module):
     def __init__(self, hidden: int, n_feats: int, dim: int, n_blocks: int, kernel: int, levels: list[int],
-                 feat_scale: list[float]):
+                 feat_scale: list[float], aux_weight: float = 0.0):
         super().__init__()
+        self.aux_weight = aux_weight
         self.feat_scale = list(feat_scale)
         self.inp = nn.Linear(n_feats, dim)
         self.blocks = nn.ModuleList(_Block(dim, kernel) for _ in range(n_blocks))
         self.head = nn.Sequential(nn.LayerNorm(dim + 2), nn.Linear(dim + 2, dim), nn.GELU(), nn.Linear(dim, len(levels)))
         self.fsq = FSQ(levels)
         self.out = nn.Linear(len(levels), hidden)
+        self.aux = nn.Sequential(nn.Linear(len(levels), dim), nn.GELU(), nn.Linear(dim, N_AUX))
         self.reset_parameters()
 
     def reset_parameters(self):
@@ -94,7 +107,24 @@ class ProsodyEncoder(nn.Module):
 
     def codes(self, feats, flen, syl, extra):
         """Quantized codes ``[S, n_dims]`` in [-1, 1]."""
+        return self.encode(feats, flen, syl, extra)[0]
+
+    @staticmethod
+    def aux_targets(feats, syl, extra):
+        """``[S, N_AUX]`` from the raw frame features of each syllable."""
+        f = feats.float()
+        cols = torch.stack([f[..., 0], f[..., 1], f[..., 2], (f[..., 1] > 0).float()], -1)
+        cs = torch.nn.functional.pad(cols.cumsum(1), (0, 0, 1, 0))
+        u, f0, f1 = syl[:, 0], syl[:, 1], syl[:, 2]
+        tot = cs[u, f1] - cs[u, f0]
+        n = (f1 - f0).clamp(min=1).float()
+        st = tot[:, 0] / tot[:, 3].clamp(min=1)
+        return torch.stack([st / 6, tot[:, 1] / n, tot[:, 2] / n / 20, extra[:, 0].float(), extra[:, 1].float()], -1)
+
+    def encode(self, feats, flen, syl, extra):
+        """``(codes [S, n_dims], aux loss)``: the codes, and how badly they predict :func:`aux_targets`."""
         U, T, _ = feats.shape
+        target = self.aux_targets(feats, syl, extra)
         mask = (torch.arange(T, device=feats.device)[None] < flen[:, None]).unsqueeze(-1).to(feats.dtype)
         dt = self.inp.weight.dtype
         feats, extra, mask = feats.to(dt), extra.to(dt), mask.to(dt)
@@ -105,11 +135,14 @@ class ProsodyEncoder(nn.Module):
         cs = torch.nn.functional.pad(x.cumsum(1), (0, 0, 1, 0))  # [U, T + 1, D]
         u, f0, f1 = syl[:, 0], syl[:, 1], syl[:, 2]
         pooled = (cs[u, f1] - cs[u, f0]) / (f1 - f0).clamp(min=1).unsqueeze(-1).to(x.dtype)
-        return self.fsq(self.head(torch.cat([pooled, extra.to(x.dtype)], -1)))
+        codes = self.fsq(self.head(torch.cat([pooled, extra.to(x.dtype)], -1)))
+        aux = torch.nn.functional.mse_loss(self.aux(codes.to(dt)).float(), target)
+        return codes, aux
 
     def forward(self, feats, flen, syl, extra, keep):
-        """Embeddings ``[S, hidden]``; dropped syllables are exactly zero."""
-        return self.out(self.codes(feats, flen, syl, extra)) * keep.unsqueeze(-1).to(feats.dtype)
+        """``(embeddings [S, hidden], aux loss)``; dropped syllables embed to exactly zero."""
+        codes, aux = self.encode(feats, flen, syl, extra)
+        return self.out(codes.to(self.out.weight.dtype)) * keep.unsqueeze(-1).to(self.out.weight.dtype), aux
 
     def embed_codes(self, codes, keep):
         dt = self.out.weight.dtype
@@ -135,6 +168,7 @@ class OmniVoiceProsody(OmniVoice):
         self.prosody_encoder = ProsodyEncoder(hidden=config.llm_config.hidden_size, **pc)
         self._pros_add = None
         self.infer_add = None  # [2B, L, H] set by omnivoice_dpo.prosody.infer around the upstream sampler
+        self._aux_log = []
 
     def _prepare_embed_inputs(self, input_ids, audio_mask):
         e = super()._prepare_embed_inputs(input_ids, audio_mask)
@@ -143,14 +177,16 @@ class OmniVoiceProsody(OmniVoice):
         return e
 
     def prosody_add(self, pros_feats, pros_flen, pros_syl, pros_extra, pros_keep, pros_tok):
-        emb = self.prosody_encoder(pros_feats.float(), pros_flen, pros_syl, pros_extra.float(), pros_keep.float())
-        return scatter_to_positions(emb, pros_tok)
+        """``(additions [B, L, H], aux loss)``."""
+        emb, aux = self.prosody_encoder(pros_feats.float(), pros_flen, pros_syl, pros_extra.float(), pros_keep.float())
+        return scatter_to_positions(emb, pros_tok), aux
 
     def forward(self, input_ids, audio_mask, labels=None, attention_mask=None, document_ids=None, position_ids=None,
                 pros_feats=None, pros_flen=None, pros_syl=None, pros_extra=None, pros_keep=None, pros_tok=None,
                 pros_add=None):
+        aux = None
         if pros_add is None and pros_feats is not None and pros_syl.shape[0] > 0:
-            pros_add = self.prosody_add(pros_feats, pros_flen, pros_syl, pros_extra, pros_keep, pros_tok)
+            pros_add, aux = self.prosody_add(pros_feats, pros_flen, pros_syl, pros_extra, pros_keep, pros_tok)
         if pros_add is None and self.infer_add is not None and self.infer_add.shape[:2] == (input_ids.shape[0],
                                                                                             input_ids.shape[-1]):
             pros_add = self.infer_add
@@ -160,7 +196,15 @@ class OmniVoiceProsody(OmniVoice):
             pros_add = sum(p.reshape(-1)[0] for p in self.prosody_encoder.parameters()) * 0.0
         self._pros_add = pros_add
         try:
-            return super().forward(input_ids=input_ids, audio_mask=audio_mask, labels=labels,
-                                   attention_mask=attention_mask, document_ids=document_ids, position_ids=position_ids)
+            out = super().forward(input_ids=input_ids, audio_mask=audio_mask, labels=labels,
+                                  attention_mask=attention_mask, document_ids=document_ids, position_ids=position_ids)
         finally:
             self._pros_add = None
+        w = self.prosody_encoder.aux_weight
+        if out.loss is not None and aux is not None and w > 0:
+            out.loss = out.loss + w * aux
+            self._aux_log.append(float(aux.detach()))
+            if len(self._aux_log) >= 400:
+                logger.info(f"prosody aux loss (mean of {len(self._aux_log)} batches): {np.mean(self._aux_log):.4f}")
+                self._aux_log = []
+        return out
