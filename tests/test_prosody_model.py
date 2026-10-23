@@ -132,3 +132,22 @@ def test_aux_targets():
     f[0, :4, 0], f[0, :4, 1], f[0, :, 2] = 3.0, 1.0, -20.0  # voiced, +3 st, -20 dB on frames 0..3
     t = ProsodyEncoder.aux_targets(f, torch.tensor([[0, 0, 4], [0, 4, 10]]), torch.zeros(2, 2))
     assert torch.allclose(t[0, :3], torch.tensor([0.5, 1.0, -1.0])) and torch.allclose(t[1, :3], torch.tensor([0.0, 0.0, -1.0]))
+
+
+def test_prosody_guidance_leaves_uncoded_rows(tiny):
+    torch.nn.init.normal_(tiny.prosody_encoder.out.weight)
+    ids = torch.randint(0, 300, (2, C, 20))
+    am = torch.zeros(2, 20, dtype=torch.bool)
+    am[:, 12:] = True
+    add = torch.zeros(2, 20, 32)
+    add[0, 4:8] = torch.randn(4, 32)
+    with torch.no_grad():
+        tiny.infer_add = add
+        plain_g = tiny(input_ids=ids, audio_mask=am).logits
+        tiny.pros_guidance = 2.0
+        guided = tiny(input_ids=ids, audio_mask=am).logits
+        tiny.infer_add, tiny.pros_guidance = None, 0.0
+    lp = plain_g.float().log_softmax(-1)
+    assert torch.allclose(guided[1], lp[1], atol=1e-5)  # row without codes: log-probs, unchanged
+    assert not torch.allclose(guided[0], lp[0], atol=1e-3)
+    torch.nn.init.zeros_(tiny.prosody_encoder.out.weight)

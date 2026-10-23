@@ -168,6 +168,7 @@ class OmniVoiceProsody(OmniVoice):
         self.prosody_encoder = ProsodyEncoder(hidden=config.llm_config.hidden_size, **pc)
         self._pros_add = None
         self.infer_add = None  # [2B, L, H] set by omnivoice_dpo.prosody.infer around the upstream sampler
+        self.pros_guidance = 0.0  # > 0: at inference, amplify the codes' effect (see forward)
         self._aux_log = []
 
     def _prepare_embed_inputs(self, input_ids, audio_mask):
@@ -200,6 +201,13 @@ class OmniVoiceProsody(OmniVoice):
                                   attention_mask=attention_mask, document_ids=document_ids, position_ids=position_ids)
         finally:
             self._pros_add = None
+        if self.pros_guidance > 0 and not self.training and pros_add is not None and labels is None:
+            # prosody guidance, like CFG on text: lp + w * (lp - lp without codes), on log-probs; rows without codes
+            # (the unconditional half) are unchanged
+            plain = super().forward(input_ids=input_ids, audio_mask=audio_mask, attention_mask=attention_mask,
+                                    document_ids=document_ids, position_ids=position_ids)
+            lp, l0 = out.logits.float().log_softmax(-1), plain.logits.float().log_softmax(-1)
+            out.logits = (lp + self.pros_guidance * (lp - l0)).to(out.logits.dtype)
         w = self.prosody_encoder.aux_weight
         if out.loss is not None and aux is not None and w > 0:
             out.loss = out.loss + w * aux

@@ -48,8 +48,9 @@ def target_positions(model, task, denoise: bool = True, i: int = 0):
 
 @torch.inference_mode()
 def generate(model, text: str, vcp, num_target: int, cfg, syl_emb: torch.Tensor | None = None, seed: int = 0,
-             lang: str = "vi") -> torch.Tensor:
-    """Audio tokens ``[C, num_target]``. ``syl_emb`` ``[n_target_syllables, H]`` or None (plain model)."""
+             lang: str = "vi", pros_guidance: float = 0.0) -> torch.Tensor:
+    """Audio tokens ``[C, num_target]``. ``syl_emb`` ``[n_target_syllables, H]`` or None (plain model);
+    ``pros_guidance`` > 0 amplifies the codes' effect (one extra forward per step)."""
     torch.manual_seed(seed)
     task = model._preprocess_all(text=[text], language=[lang], voice_clone_prompt=[vcp], duration=None,
                                  preprocess_prompt=cfg.preprocess_prompt)
@@ -63,10 +64,12 @@ def generate(model, text: str, vcp, num_target: int, cfg, syl_emb: torch.Tensor 
         m = pos >= 0
         add[0, m.to(model.device)] = syl_emb[pos[m].to(syl_emb.device)].to(add.device)
         model.infer_add = add
+    model.pros_guidance = pros_guidance if syl_emb is not None else 0.0
     try:
         return model._generate_iterative(task, cfg)[0]
     finally:
         model.infer_add = None
+        model.pros_guidance = 0.0
 
 
 @torch.inference_mode()

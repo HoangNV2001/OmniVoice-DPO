@@ -11,6 +11,9 @@ whether the change stays local), plus the CTC confidence of the whole sentence.
 generation is re-encoded into codes for every syllable (condition ``self``), then only the target syllable's levels are
 changed. Edit entries are then an absolute level, ``"+k"`` / ``"-k"`` to move that many levels (clamped), or null to keep.
 
+An edit may also be ``{"levels": [...], "extra": k}``: the sentence gets k more audio frames (the total length is fixed at
+generation, so a pause or a longer syllable needs room). ``--pros-guidance w`` amplifies the codes' effect.
+
     python -m omnivoice_dpo.prosody.control --model <ckpt dir with audio_tokenizer/> --data-config data.json \\
         --ctc <CTC model> --voices-dir voices/ --out out/ --neutral '[4,0,1,2]' \\
         --edits '{"pitch_up": [0,null,null,null], "pitch_down": [7,null,null,null], "long": [null,null,null,4]}'
@@ -48,12 +51,15 @@ def main():
     ap.add_argument("--n", type=int, default=30, help="texts per dataset")
     ap.add_argument("--neutral", help="levels used for null entries (context none)")
     ap.add_argument("--context", choices=["none", "self"], default="none")
+    ap.add_argument("--pros-guidance", type=float, default=0.0)
     ap.add_argument("--edits", required=True)
     ap.add_argument("--wav", type=int, default=12)
     ap.add_argument("--seed", type=int, default=0)
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)
     neutral, edits = json.loads(a.neutral) if a.neutral else None, json.loads(a.edits)
+    extra = {k: v.get("extra", 0) for k, v in edits.items() if isinstance(v, dict)}
+    edits = {k: v["levels"] if isinstance(v, dict) else v for k, v in edits.items()}
     rng = random.Random(a.seed)
 
     want = set(a.datasets.split(","))
@@ -111,7 +117,8 @@ def main():
                 keep = torch.zeros(n, device=model.device)
                 keep[tgt] = 1
                 emb = enc.embed_codes(code.expand(n, -1), keep)
-            tok = generate(model, text, voices[vname], T, cfg, syl_emb=emb, seed=a.seed)
+            tok = generate(model, text, voices[vname], T + extra.get(cond, 0), cfg, syl_emb=emb, seed=a.seed,
+                           pros_guidance=a.pros_guidance)
             got = ex(tok.cpu().numpy(), text)
             if got[0] is None:
                 res[cond] = None
@@ -139,7 +146,8 @@ def main():
         if (j + 1) % 10 == 0:
             print(f"### {j + 1}/{len(picked)}", flush=True)
 
-    summary = {"n": len(rows), "neutral": neutral, "edits": edits, "context": a.context}
+    summary = {"n": len(rows), "neutral": neutral, "edits": edits, "extra": extra, "context": a.context,
+               "pros_guidance": a.pros_guidance}
     conds = (["self"] if a.context == "self" else []) + list(edits)
     for cond in conds:
         summary[cond] = {m: boot([r[cond].get(m, np.nan) if r.get(cond) else np.nan for r in rows])
