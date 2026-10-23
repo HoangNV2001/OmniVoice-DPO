@@ -39,12 +39,13 @@ PAUSE = 3  # frames (120 ms)
 
 
 def syl_stats(feats: np.ndarray, syl) -> np.ndarray:
-    """``[n, 3]``: mean F0 st over voiced frames (NaN if none), log(1 + duration frames), pause frames."""
+    """``[n, 4]``: mean F0 st over voiced frames (NaN if none), log(1 + duration frames), pause frames, mean energy (dB
+    re the utterance maximum)."""
     out = []
     for s in syl:
         f = feats[int(s[2]):int(s[3])]
         v = f[:, 1] > 0.5
-        out.append([float(f[v, 0].mean()) if v.any() else np.nan, np.log1p(s[3] - s[2]), s[4]])
+        out.append([float(f[v, 0].mean()) if v.any() else np.nan, np.log1p(s[3] - s[2]), s[4], float(f[:, 2].mean())])
     return np.asarray(out, dtype=np.float64)
 
 

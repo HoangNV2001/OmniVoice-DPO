@@ -130,7 +130,7 @@ def main():
                     continue
                 nb = [i for i in (tgt - 1, tgt + 1) if 0 <= i < n]
                 res[cond].update(d_f0=st[tgt, 0] - base[tgt, 0], d_dur=st[tgt, 1] - base[tgt, 1],
-                                 d_pause=st[tgt, 2] - base[tgt, 2],
+                                 d_pause=st[tgt, 2] - base[tgt, 2], d_energy=st[tgt, 3] - base[tgt, 3],
                                  d_f0_nb=float(np.nanmean(st[nb, 0] - base[nb, 0])),
                                  d_dur_nb=float(np.nanmean(st[nb, 1] - base[nb, 1])))
         fo.write(json.dumps(res, ensure_ascii=False, default=float) + "\n")
@@ -143,7 +143,7 @@ def main():
     conds = (["self"] if a.context == "self" else []) + list(edits)
     for cond in conds:
         summary[cond] = {m: boot([r[cond].get(m, np.nan) if r.get(cond) else np.nan for r in rows])
-                         for m in ("d_f0", "d_dur", "d_pause", "d_f0_nb", "d_dur_nb")}
+                         for m in ("d_f0", "d_dur", "d_pause", "d_energy", "d_f0_nb", "d_dur_nb")}
         summary[cond]["conf-null"] = boot([r[cond]["conf"] - r["null"]["conf"] if r.get(cond) and r.get("null") else np.nan
                                            for r in rows])
     json.dump(summary, open(os.path.join(a.out, "summary.json"), "w"), indent=1)
