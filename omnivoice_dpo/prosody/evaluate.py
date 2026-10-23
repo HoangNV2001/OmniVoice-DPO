@@ -104,7 +104,7 @@ def main():
         for lst in d["manifest_path"]:
             if lst.split("/dataset/")[1].split("/")[0] in want:
                 lists.append(lst)
-    picked = []
+    per_ds = []
     for name in sorted(want):
         cands = []
         for lst in [x for x in lists if f"/dataset/{name}/" in x]:
@@ -117,7 +117,9 @@ def main():
                     got = store.lookup(r["id"], t, T)
                     if got is not None and got[2].mean() >= 0.5 and len(got[1]) >= 5:
                         cands.append((name, r["id"], t, T, p[0]))
-        picked += rng.sample(cands, min(a.n, len(cands)))
+        per_ds.append(rng.sample(cands, min(a.n, len(cands))))
+    # interleave datasets, so the first --wav utterances (written as audio) cover all of them
+    picked = [x for i in range(max(map(len, per_ds), default=0)) for d in per_ds if i < len(d) for x in [d[i]]]
     print(f"### {len(picked)} utterances from {sorted(want)}", flush=True)
 
     model = OmniVoiceProsody.from_pretrained(a.model, dtype=torch.float16).cuda().eval()
